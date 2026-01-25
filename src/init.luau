@@ -50,6 +50,10 @@ end
 	Must be called before using other MarketService functions.
 ]=]
 MarketService.Init = function()
+	if State.Initialised then
+		error("[MarketService] Already initialised")
+	end
+
 	-- Initialize submodules
 	Products.Init()
 	Passes.Init()

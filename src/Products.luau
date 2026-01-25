@@ -67,6 +67,14 @@ Products.RegisterProduct = function(key: string, product_id: number)
 		"[MarketService] Product with key '" .. key .. "' is already registered"
 	)
 
+	-- Check for duplicate asset IDs
+	for existingKey, existingData in State.RegisteredPurchaseItems do
+		assert(
+			existingData.AssetId ~= product_id,
+			`[MarketService] Asset ID {product_id} is already registered under key '{existingKey}'`
+		)
+	end
+
 	State.RegisteredPurchaseItems[key] = {
 		Type = "Product",
 		AssetId = product_id,
@@ -126,7 +134,28 @@ Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServicePr
 		)
 	end
 
-	return MarketplaceService:GetProductInfo(data.AssetId, Enum.InfoType.Product)
+	local lastError: string? = nil
+	for attempt = 1, State.MAX_RETRY_ATTEMPTS do
+		local success, result = pcall(function()
+			return MarketplaceService:GetProductInfo(data.AssetId, Enum.InfoType.Product)
+		end)
+
+		if success then
+			return result
+		else
+			lastError = result
+			warn(
+				`[MarketService] Failed to get product info for '{key}', attempt {attempt}/{State.MAX_RETRY_ATTEMPTS}: {result}`
+			)
+			if attempt < State.MAX_RETRY_ATTEMPTS then
+				task.wait(1)
+			end
+		end
+	end
+
+	error(
+		`[MarketService] Failed to get product info for '{key}' after {State.MAX_RETRY_ATTEMPTS} attempts: {lastError}`
+	)
 end
 
 --[=[
@@ -161,6 +190,16 @@ end
 ]=]
 Products.Init = function()
 	if RunService:IsServer() then
+		-- Validate all products have callbacks registered
+		for key, data in State.RegisteredPurchaseItems do
+			if data.Type == "Product" then
+				assert(
+					ProductPurchaseCallbacks[data.AssetId] ~= nil,
+					`[MarketService] Product '{key}' has no purchase callback registered. Use SetProductPurchaseCallback before Init.`
+				)
+			end
+		end
+
 		MarketplaceService.ProcessReceipt = process_receipt_internal
 	end
 end

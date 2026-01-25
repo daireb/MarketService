@@ -131,6 +131,14 @@ Passes.RegisterPass = function(key: string, pass_id: number)
 		"[MarketService] Pass with key '" .. key .. "' is already registered"
 	)
 
+	-- Check for duplicate asset IDs
+	for existingKey, existingData in State.RegisteredPurchaseItems do
+		assert(
+			existingData.AssetId ~= pass_id,
+			`[MarketService] Asset ID {pass_id} is already registered under key '{existingKey}'`
+		)
+	end
+
 	State.RegisteredPurchaseItems[key] = {
 		Type = "Pass",
 		AssetId = pass_id,
@@ -153,6 +161,10 @@ end
 	The callback fires either when the pass is preloaded (player already owned it)
 	or when they purchase it. It will only fire once per player per pass.
 	Multiple callbacks can be bound to the same pass.
+
+	**Important:** Register callbacks BEFORE calling MarketService.Init() to ensure
+	the callback fires for all players. Callbacks registered after Init may miss
+	players whose ownership is still being preloaded.
 
 	@param key string -- The key the pass was registered with
 	@param callback PassOwnershipCallback -- The callback to invoke. Receives (player, was_just_purchased, key)
@@ -231,7 +243,26 @@ Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProduct
 		)
 	end
 
-	return MarketplaceService:GetProductInfo(data.AssetId, Enum.InfoType.GamePass)
+	local lastError: string? = nil
+	for attempt = 1, State.MAX_RETRY_ATTEMPTS do
+		local success, result = pcall(function()
+			return MarketplaceService:GetProductInfo(data.AssetId, Enum.InfoType.GamePass)
+		end)
+
+		if success then
+			return result
+		else
+			lastError = result
+			warn(
+				`[MarketService] Failed to get pass info for '{key}', attempt {attempt}/{State.MAX_RETRY_ATTEMPTS}: {result}`
+			)
+			if attempt < State.MAX_RETRY_ATTEMPTS then
+				task.wait(1)
+			end
+		end
+	end
+
+	error(`[MarketService] Failed to get pass info for '{key}' after {State.MAX_RETRY_ATTEMPTS} attempts: {lastError}`)
 end
 
 --[=[
