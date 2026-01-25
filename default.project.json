@@ -1,0 +1,14 @@
+{
+  "name": "easy-input-action-system",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "package": {
+        "$className": "Folder",
+        "src": {
+          "$path": "src"
+        }
+      }
+    }
+  }
+}

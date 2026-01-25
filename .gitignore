@@ -1,0 +1,10 @@
+# MacOs
+.DS_Store
+
+# Pesde
+.pesde
+luau_packages
+lune_packages
+
+# Misc
+sourcemap.json
