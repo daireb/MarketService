@@ -162,9 +162,7 @@ end
 	or when they purchase it. It will only fire once per player per pass.
 	Multiple callbacks can be bound to the same pass.
 
-	**Important:** Register callbacks BEFORE calling MarketService.Init() to ensure
-	the callback fires for all players. Callbacks registered after Init may miss
-	players whose ownership is still being preloaded.
+	Can be called before or after MarketService.Init().
 
 	@param key string -- The key the pass was registered with
 	@param callback PassOwnershipCallback -- The callback to invoke. Receives (player, was_just_purchased, key)
@@ -179,12 +177,13 @@ Passes.OnPassOwned = function(key: string, callback: Types.PassOwnershipCallback
 	end
 	table.insert(PassOwnershipCallbacks[key], callback)
 
-	-- Initial call for players who already own the pass
+	-- Fire callback for players whose ownership is already cached.
+	-- Players still being checked will have callbacks fired by preload_player_passes.
 	for user_id, user_cache in PassOwnershipCache do
 		if user_cache[data.AssetId] then
 			local player = Players:GetPlayerByUserId(user_id)
 			if player then
-				callback(player, false, key)
+				task.spawn(callback, player, false, key)
 			end
 		end
 	end
