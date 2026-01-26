@@ -14,7 +14,7 @@ An opinionated [MarketplaceService](https://create.roblox.com/docs/reference/eng
 ## Installation
 
 ```bash
-pesde add gh#daireb/marketservice#main
+pesde add gh#daireb/MarketService#main
 ```
 
 ## Usage
