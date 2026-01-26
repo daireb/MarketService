@@ -8,3 +8,5 @@ lune_packages
 
 # Misc
 sourcemap.json
+*.rbxl
+*.rbxl.lock
