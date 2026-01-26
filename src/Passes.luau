@@ -288,13 +288,12 @@ Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProduct
 end
 
 --[=[
-	Prompts the purchase prompt for a registered pass purchase item. Returns once the prompt is closed.
+	Prompts the purchase prompt for a registered pass purchase item.
 
-	@yields
 	@param key string -- The key the pass was registered with
 	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
 ]=]
-Passes.PromptPassPurchaseAsync = function(key: string, player: Player?)
+Passes.PromptPassPurchase = function(key: string, player: Player?)
 	assert(State.Initialised, "[MarketService] MarketService must be initialised before prompting purchases")
 
 	if RunService:IsServer() then

@@ -185,13 +185,12 @@ Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServicePr
 end
 
 --[=[
-	Prompts the purchase prompt for a registered product purchase item. Returns once the prompt is closed.
+	Prompts the purchase prompt for a registered product purchase item.
 
-	@yields
 	@param key string -- The key the product was registered with
 	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
 ]=]
-Products.PromptProductPurchaseAsync = function(key: string, player: Player?)
+Products.PromptProductPurchase = function(key: string, player: Player?)
 	assert(State.Initialised, "[MarketService] MarketService must be initialised before prompting purchases")
 
 	if RunService:IsServer() then

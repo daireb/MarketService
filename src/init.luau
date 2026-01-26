@@ -17,7 +17,7 @@ MarketService.RegisterProduct = Products.RegisterProduct
 MarketService.RegisterProducts = Products.RegisterProducts
 MarketService.SetProductPurchaseCallback = Products.SetProductPurchaseCallback
 MarketService.GetProductInfoAsync = Products.GetProductInfoAsync
-MarketService.PromptProductPurchaseAsync = Products.PromptProductPurchaseAsync
+MarketService.PromptProductPurchase = Products.PromptProductPurchase
 MarketService.GetAllProductKeys = Products.GetAllProductKeys
 MarketService.IsProductRegistered = Products.IsProductRegistered
 
@@ -27,7 +27,7 @@ MarketService.RegisterPasses = Passes.RegisterPasses
 MarketService.OnPassOwned = Passes.OnPassOwned
 MarketService.PlayerOwnsPass = Passes.PlayerOwnsPass
 MarketService.GetPassInfoAsync = Passes.GetPassInfoAsync
-MarketService.PromptPassPurchaseAsync = Passes.PromptPassPurchaseAsync
+MarketService.PromptPassPurchase = Passes.PromptPassPurchase
 MarketService.AwardSessionPass = Passes.AwardSessionPass
 MarketService.GetAllPassKeys = Passes.GetAllPassKeys
 MarketService.IsPassRegistered = Passes.IsPassRegistered
