@@ -185,7 +185,7 @@ Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServicePr
 end
 
 --[=[
-	Prompts the purchase prompt for a registered product purchase item
+	Prompts the purchase prompt for a registered product purchase item. Returns once the prompt is closed.
 
 	@yields
 	@param key string -- The key the product was registered with

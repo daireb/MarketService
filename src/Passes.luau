@@ -288,8 +288,9 @@ Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProduct
 end
 
 --[=[
-	Prompts the purchase prompt for a registered pass purchase item
+	Prompts the purchase prompt for a registered pass purchase item. Returns once the prompt is closed.
 
+	@yields
 	@param key string -- The key the pass was registered with
 	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
 ]=]
