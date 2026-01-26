@@ -207,6 +207,61 @@ Products.PromptProductPurchase = function(key: string, player: Player?)
 	MarketplaceService:PromptProductPurchase(player, data.AssetId)
 end
 
+--[=[
+	Simulates a product purchase for testing purposes. Invokes the purchase callback
+	with a mock receipt and fires all side effects as if the purchase was real.
+	Server-only.
+
+	@param key string -- The key the product was registered with
+	@param player Player -- The player to simulate the purchase for
+]=]
+Products.SimulateProductPurchased = function(key: string, player: Player)
+	assert(State.Initialised, "[MarketService] MarketService must be initialised before simulating purchases")
+	assert(RunService:IsServer(), "[MarketService] SimulateProductPurchased can only be called from the server")
+
+	local data = State.RegisteredPurchaseItems[key]
+	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
+	assert(data.Type == "Product", "[MarketService] Expected purchase item type to be 'Product'")
+
+	local callback = ProductPurchaseCallbacks[data.AssetId]
+	assert(callback ~= nil, `[MarketService] No purchase callback registered for product '{key}'`)
+
+	task.spawn(function()
+		-- Create mock receipt with a numeric string PurchaseId (like real receipts)
+		local mockPurchaseId = tostring(-math.random(1000000000, 9999999999))
+		local mockReceipt: Types.MarketplaceServiceReceiptInfo = {
+			PurchaseId = mockPurchaseId,
+			PlayerId = player.UserId,
+			ProductId = data.AssetId,
+			PlaceIdWherePurchased = game.PlaceId,
+			CurrencySpent = 0,
+			CurrencyType = Enum.CurrencyType.Robux,
+			ProductPurchaseChannel = Enum.ProductPurchaseChannel.InExperience,
+		}
+
+		local success, result = pcall(callback, player, mockReceipt)
+
+		if success then
+			if typeof(result) == "EnumItem" and result.EnumType == Enum.ProductPurchaseDecision then
+				if result ~= Enum.ProductPurchaseDecision.PurchaseGranted then
+					warn(
+						`[MarketService] Simulated purchase callback for '{key}' returned {result.Name} instead of PurchaseGranted`
+					)
+				end
+			else
+				warn(
+					`[MarketService] Simulated purchase callback for '{key}' returned invalid value: {tostring(result)} (expected Enum.ProductPurchaseDecision)`
+				)
+			end
+		else
+			warn(`[MarketService] Simulated purchase callback for '{key}' errored: {result}`)
+		end
+
+		-- Fire side effect event
+		State.ProductPurchaseFinished:Fire(player, key, true)
+	end)
+end
+
 -- Initialization
 
 --[=[

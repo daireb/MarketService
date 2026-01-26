@@ -104,6 +104,9 @@ MarketService.PromptProductPurchase("100Coins", player)
 -- Get product info
 local info = MarketService.GetProductInfoAsync("100Coins")
 print(info.Name, info.PriceInRobux)
+
+-- Simulates a purchase for testing (server only)
+MarketService.SimulateProductPurchased("100Coins", player)
 ```
 
 ### Session Passes
@@ -174,6 +177,7 @@ end)
 | `SetProductPurchaseCallback(key, callback)` | Set receipt handler for a product. Must return `Enum.ProductPurchaseDecision`. All products require a receipt handler! |
 | `GetProductInfoAsync(key) -> ProductInfo` | Get product info from Roblox (yields) |
 | `PromptProductPurchase(key, player?)` | Prompt purchase. Player required on server, omit on client |
+| `SimulateProductPurchased(key, player)` | Simulate a purchase for testing. Fires callback and all side effects (server only) |
 | `GetAllProductKeys() -> { string }` | Get all registered product keys |
 | `IsProductRegistered(key) -> boolean` | Check if a product is registered |
 

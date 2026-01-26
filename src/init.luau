@@ -18,6 +18,7 @@ MarketService.RegisterProducts = Products.RegisterProducts
 MarketService.SetProductPurchaseCallback = Products.SetProductPurchaseCallback
 MarketService.GetProductInfoAsync = Products.GetProductInfoAsync
 MarketService.PromptProductPurchase = Products.PromptProductPurchase
+MarketService.SimulateProductPurchased = Products.SimulateProductPurchased
 MarketService.GetAllProductKeys = Products.GetAllProductKeys
 MarketService.IsProductRegistered = Products.IsProductRegistered
 
