@@ -18,6 +18,8 @@ MarketService.RegisterProducts = Products.RegisterProducts
 MarketService.SetProductPurchaseCallback = Products.SetProductPurchaseCallback
 MarketService.GetProductInfoAsync = Products.GetProductInfoAsync
 MarketService.PromptProductPurchaseAsync = Products.PromptProductPurchaseAsync
+MarketService.GetAllProductKeys = Products.GetAllProductKeys
+MarketService.IsProductRegistered = Products.IsProductRegistered
 
 -- Passes (delegated to Passes module)
 MarketService.RegisterPass = Passes.RegisterPass
@@ -28,6 +30,7 @@ MarketService.GetPassInfoAsync = Passes.GetPassInfoAsync
 MarketService.PromptPassPurchaseAsync = Passes.PromptPassPurchaseAsync
 MarketService.AwardSessionPass = Passes.AwardSessionPass
 MarketService.GetAllPassKeys = Passes.GetAllPassKeys
+MarketService.IsPassRegistered = Passes.IsPassRegistered
 
 -- Purchase events (for side effects like sound effects, NOT for critical logic)
 -- Usage: MarketService.ProductPurchaseFinished:Connect(function(player, key, wasPurchased) end)

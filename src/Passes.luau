@@ -113,6 +113,17 @@ Passes.GetAllPassKeys = function(): { string }
 	return keys
 end
 
+--[=[
+	Checks if a pass is registered with the given key
+
+	@param key string -- The key to check
+	@return boolean -- Whether a pass is registered with this key
+]=]
+Passes.IsPassRegistered = function(key: string): boolean
+	local data = State.RegisteredPurchaseItems[key]
+	return data ~= nil and data.Type == "Pass"
+end
+
 -- Pre-initialisation
 
 --[=[
@@ -166,8 +177,9 @@ end
 
 	@param key string -- The key the pass was registered with
 	@param callback PassOwnershipCallback -- The callback to invoke. Receives (player, was_just_purchased, key)
+	@return () -> () -- A function that, when called, disconnects this callback
 ]=]
-Passes.OnPassOwned = function(key: string, callback: Types.PassOwnershipCallback)
+Passes.OnPassOwned = function(key: string, callback: Types.PassOwnershipCallback): () -> ()
 	local data = State.RegisteredPurchaseItems[key]
 	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
 	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
@@ -184,6 +196,17 @@ Passes.OnPassOwned = function(key: string, callback: Types.PassOwnershipCallback
 			local player = Players:GetPlayerByUserId(user_id)
 			if player then
 				task.spawn(callback, player, false, key)
+			end
+		end
+	end
+
+	-- Return disconnect function
+	return function()
+		local callbacks = PassOwnershipCallbacks[key]
+		if callbacks then
+			local index = table.find(callbacks, callback)
+			if index then
+				table.remove(callbacks, index)
 			end
 		end
 	end

@@ -49,6 +49,32 @@ end
 
 local Products = {}
 
+--[=[
+	Returns an array of all registered product keys
+
+	@return { string } -- Array of product keys
+]=]
+Products.GetAllProductKeys = function(): { string }
+	local keys = {}
+	for key, data in State.RegisteredPurchaseItems do
+		if data.Type == "Product" then
+			table.insert(keys, key)
+		end
+	end
+	return keys
+end
+
+--[=[
+	Checks if a product is registered with the given key
+
+	@param key string -- The key to check
+	@return boolean -- Whether a product is registered with this key
+]=]
+Products.IsProductRegistered = function(key: string): boolean
+	local data = State.RegisteredPurchaseItems[key]
+	return data ~= nil and data.Type == "Product"
+end
+
 -- Pre-initialisation
 
 --[=[

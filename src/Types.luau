@@ -72,4 +72,7 @@ export type ProductPurchaseCallback = (
 
 export type PassOwnershipCallback = (player: Player, was_just_purchased: boolean, key: string) -> ()
 
+--- Function that disconnects a callback when called
+export type DisconnectFunction = () -> ()
+
 return nil
