@@ -1,50 +1,81 @@
 --!strict
 
+local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local Finished = require(script.Parent.Finished)
 local State = require(script.Parent.State)
 local Types = require(script.Parent.Types)
 
-local ProductPurchaseCallbacks = {} :: { [number]: Types.ProductPurchaseCallback }
+local ProductPurchaseCallbacks = {} :: { [string]: Types.ProductPurchaseCallback } -- key -> callback
+
+--- Runs a product's purchase callback, turning an error or a non-decision return into NotProcessedYet.
+local invoke_purchase_callback = function(
+	key: string,
+	player: Player,
+	receipt_info: Types.MarketplaceServiceReceiptInfo
+): Enum.ProductPurchaseDecision
+	local callback = ProductPurchaseCallbacks[key]
+	if callback == nil then
+		warn(`[MarketService] No purchase callback registered for product '{key}'`)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	local success, result = pcall(callback, player, receipt_info)
+	if not success then
+		warn(
+			`[MarketService] Error processing receipt {receipt_info.PurchaseId} of '{key}' for player {player.Name} ({player.UserId}): {result}`
+		)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	if typeof(result) == "EnumItem" and result.EnumType == Enum.ProductPurchaseDecision then
+		return result
+	end
+
+	warn(
+		`[MarketService] Invalid return value from purchase callback of '{key}' for receipt {receipt_info.PurchaseId} for player {player.Name} ({player.UserId}): {result}`
+	)
+	return Enum.ProductPurchaseDecision.NotProcessedYet
+end
 
 --- Internal function to process receipts
 local process_receipt_internal = function(
 	receipt_info: Types.MarketplaceServiceReceiptInfo
 ): Enum.ProductPurchaseDecision
 	local product_id = receipt_info.ProductId
-	local callback = ProductPurchaseCallbacks[product_id]
 
-	if callback ~= nil then
-		local player = Players:GetPlayerByUserId(receipt_info.PlayerId)
-		if player then
-			local success, result = pcall(callback, player, receipt_info)
-			if success then
-				if typeof(result) == "EnumItem" and result.EnumType == Enum.ProductPurchaseDecision then
-					return result
-				else
-					warn(
-						`[MarketService] Invalid return value from purchase callback for receipt {receipt_info.PurchaseId} for player {player.Name} ({player.UserId})`
-					)
-					return Enum.ProductPurchaseDecision.NotProcessedYet
-				end
-			else
-				warn(
-					`[MarketService] Error processing receipt {receipt_info.PurchaseId} for player {player.Name} ({player.UserId}): {result}`
-				)
-				return Enum.ProductPurchaseDecision.NotProcessedYet
-			end
-		else
-			warn(
-				`[MarketService] Could not find player with UserId {receipt_info.PlayerId} for processing receipt {receipt_info.PurchaseId}`
-			)
-			return Enum.ProductPurchaseDecision.NotProcessedYet
+	local key: string? = nil
+	for item_key, data in State.RegisteredPurchaseItems do
+		if data.Type == "Product" and data.AssetId == product_id then
+			key = item_key
+			break
 		end
-	else
-		warn(`[MarketService] No purchase callback registered for product ID {product_id}`)
+	end
+
+	if key == nil then
+		warn(`[MarketService] No product registered for product ID {product_id}`)
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
+
+	local player = Players:GetPlayerByUserId(receipt_info.PlayerId)
+	if not player then
+		warn(
+			`[MarketService] Could not find player with UserId {receipt_info.PlayerId} for processing receipt {receipt_info.PurchaseId}`
+		)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	return invoke_purchase_callback(key, player, receipt_info)
+end
+
+local assert_product = function(key: string): Types.PurchaseItem
+	local data = State.RegisteredPurchaseItems[key]
+	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
+	assert(data.Type == "Product", "[MarketService] Expected purchase item type to be 'Product'")
+	return data
 end
 
 local Products = {}
@@ -65,7 +96,7 @@ Products.GetAllProductKeys = function(): { string }
 end
 
 --[=[
-	Checks if a product is registered with the given key
+	Checks if a product is registered with the given key, listed or not
 
 	@param key string -- The key to check
 	@return boolean -- Whether a product is registered with this key
@@ -78,12 +109,13 @@ end
 -- Pre-initialisation
 
 --[=[
-	Registers a purchase item of type "Product"
+	Registers a purchase item of type "Product". Without a product id the product is unlisted:
+	it can't be prompted or looked up on Roblox, only simulated.
 
 	@param key string -- The key to register the product under
-	@param product_id number -- The Roblox product ID
+	@param product_id number? -- The Roblox product ID, or nil for an unlisted product
 ]=]
-Products.RegisterProduct = function(key: string, product_id: number)
+Products.RegisterProduct = function(key: string, product_id: number?)
 	assert(
 		not State.Initialised,
 		"[MarketService] Cannot register new purchase items after MarketService has been initialised"
@@ -93,12 +125,13 @@ Products.RegisterProduct = function(key: string, product_id: number)
 		"[MarketService] Product with key '" .. key .. "' is already registered"
 	)
 
-	-- Check for duplicate asset IDs
-	for existingKey, existingData in State.RegisteredPurchaseItems do
-		assert(
-			existingData.AssetId ~= product_id,
-			`[MarketService] Asset ID {product_id} is already registered under key '{existingKey}'`
-		)
+	if product_id ~= nil then
+		for existingKey, existingData in State.RegisteredPurchaseItems do
+			assert(
+				existingData.AssetId ~= product_id,
+				`[MarketService] Asset ID {product_id} is already registered under key '{existingKey}'`
+			)
+		end
 	end
 
 	State.RegisteredPurchaseItems[key] = {
@@ -131,17 +164,15 @@ Products.SetProductPurchaseCallback = function(key: string, callback: Types.Prod
 		"[MarketService] Cannot set purchase callbacks after MarketService has been initialised"
 	)
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Product", "[MarketService] Expected purchase item type to be 'Product'")
+	assert_product(key)
 
-	ProductPurchaseCallbacks[data.AssetId] = callback
+	ProductPurchaseCallbacks[key] = callback
 end
 
 -- Post-initialisation
 
 --[=[
-	Returns the product info for a registered product purchase item
+	Returns the product info for a registered, listed product purchase item
 
 	@yields
 	@param key The key the product was registered with
@@ -150,9 +181,8 @@ end
 Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServiceProductInfo
 	assert(State.Initialised, "[MarketService] MarketService must be initialised before getting product info")
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Product", "[MarketService] Expected purchase item type to be 'Product'")
+	local product_id = assert_product(key).AssetId
+	assert(product_id ~= nil, `[MarketService] Product '{key}' is unlisted and has no product info`)
 
 	if RunService:IsServer() then
 		warn(
@@ -163,7 +193,7 @@ Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServicePr
 	local lastError: string? = nil
 	for attempt = 1, State.MAX_RETRY_ATTEMPTS do
 		local success, result = pcall(function()
-			return MarketplaceService:GetProductInfo(data.AssetId, Enum.InfoType.Product)
+			return MarketplaceService:GetProductInfo(product_id, Enum.InfoType.Product)
 		end)
 
 		if success then
@@ -185,31 +215,63 @@ Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServicePr
 end
 
 --[=[
-	Prompts the purchase prompt for a registered product purchase item.
+	Simulates a product purchase: runs the purchase callback with a mock receipt and returns
+	its decision (NotProcessedYet if it errors or returns something else). Works for unlisted
+	products. Server-only.
 
+	The mock receipt has `Simulated = true`, `CurrencySpent = 0`, the product's id as
+	`ProductId` (0 when unlisted) and a `PurchaseId` of "test-" followed by a GUID, which no
+	real Roblox receipt uses.
+
+	A fresh purchase (no `purchase_id`) then fires `ProductPurchaseFinished` on the server and
+	the player's client. Passing the `PurchaseId` this returned redelivers that receipt, as
+	Roblox does after NotProcessedYet, and fires no finished event. Nothing redelivers on its
+	own: a caller that gets NotProcessedYet retries if it wants the purchase to land.
+
+	@yields
 	@param key string -- The key the product was registered with
-	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
+	@param player Player -- The player to simulate the purchase for
+	@param purchase_id string? -- An earlier simulated receipt's `PurchaseId`, to redeliver it
+	@return Enum.ProductPurchaseDecision -- The callback's decision
+	@return string -- The receipt's `PurchaseId`, to pass back for a redelivery
 ]=]
-Products.PromptProductPurchase = function(key: string, player: Player?)
-	assert(State.Initialised, "[MarketService] MarketService must be initialised before prompting purchases")
+Products.SimulateProductPurchaseAsync = function(
+	key: string,
+	player: Player,
+	purchase_id: string?
+): (Enum.ProductPurchaseDecision, string)
+	assert(State.Initialised, "[MarketService] MarketService must be initialised before simulating purchases")
+	assert(RunService:IsServer(), "[MarketService] SimulateProductPurchaseAsync can only be called from the server")
 
-	if RunService:IsServer() then
-		assert(player ~= nil, "[MarketService] Player must be provided when prompting purchase from server")
-	else
-		assert(player == nil, "[MarketService] Player must not be provided when prompting purchase from client")
-		player = Players.LocalPlayer
+	local data = assert_product(key)
+
+	local mock_receipt: Types.MarketplaceServiceReceiptInfo = {
+		PurchaseId = purchase_id or `test-{HttpService:GenerateGUID(false)}`,
+		PlayerId = player.UserId,
+		ProductId = data.AssetId or 0,
+		PlaceIdWherePurchased = game.PlaceId,
+		CurrencySpent = 0,
+		CurrencyType = Enum.CurrencyType.Robux,
+		ProductPurchaseChannel = Enum.ProductPurchaseChannel.InExperience,
+		Simulated = true,
+	}
+
+	local decision = invoke_purchase_callback(key, player, mock_receipt)
+	if decision ~= Enum.ProductPurchaseDecision.PurchaseGranted then
+		warn(
+			`[MarketService] Simulated receipt {mock_receipt.PurchaseId} of '{key}' returned {decision.Name} instead of PurchaseGranted`
+		)
 	end
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Product", "[MarketService] Expected purchase item type to be 'Product'")
+	if purchase_id == nil then
+		Finished.FireSimulated(player, "Product", key)
+	end
 
-	MarketplaceService:PromptProductPurchase(player, data.AssetId)
+	return decision, mock_receipt.PurchaseId
 end
 
 --[=[
-	Simulates a product purchase for testing purposes. Invokes the purchase callback
-	with a mock receipt and fires all side effects as if the purchase was real.
+	Simulates a product purchase without yielding; see `SimulateProductPurchaseAsync`.
 	Server-only.
 
 	@param key string -- The key the product was registered with
@@ -218,48 +280,9 @@ end
 Products.SimulateProductPurchased = function(key: string, player: Player)
 	assert(State.Initialised, "[MarketService] MarketService must be initialised before simulating purchases")
 	assert(RunService:IsServer(), "[MarketService] SimulateProductPurchased can only be called from the server")
+	assert_product(key)
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Product", "[MarketService] Expected purchase item type to be 'Product'")
-
-	local callback = ProductPurchaseCallbacks[data.AssetId]
-	assert(callback ~= nil, `[MarketService] No purchase callback registered for product '{key}'`)
-
-	task.spawn(function()
-		-- Create mock receipt with a numeric string PurchaseId (like real receipts)
-		local mockPurchaseId = tostring(-math.random(1000000000, 9999999999))
-		local mockReceipt: Types.MarketplaceServiceReceiptInfo = {
-			PurchaseId = mockPurchaseId,
-			PlayerId = player.UserId,
-			ProductId = data.AssetId,
-			PlaceIdWherePurchased = game.PlaceId,
-			CurrencySpent = 0,
-			CurrencyType = Enum.CurrencyType.Robux,
-			ProductPurchaseChannel = Enum.ProductPurchaseChannel.InExperience,
-		}
-
-		local success, result = pcall(callback, player, mockReceipt)
-
-		if success then
-			if typeof(result) == "EnumItem" and result.EnumType == Enum.ProductPurchaseDecision then
-				if result ~= Enum.ProductPurchaseDecision.PurchaseGranted then
-					warn(
-						`[MarketService] Simulated purchase callback for '{key}' returned {result.Name} instead of PurchaseGranted`
-					)
-				end
-			else
-				warn(
-					`[MarketService] Simulated purchase callback for '{key}' returned invalid value: {tostring(result)} (expected Enum.ProductPurchaseDecision)`
-				)
-			end
-		else
-			warn(`[MarketService] Simulated purchase callback for '{key}' errored: {result}`)
-		end
-
-		-- Fire side effect event
-		State.ProductPurchaseFinished:Fire(player, key, true)
-	end)
+	task.spawn(Products.SimulateProductPurchaseAsync, key, player)
 end
 
 -- Initialization
@@ -270,11 +293,11 @@ end
 ]=]
 Products.Init = function()
 	if RunService:IsServer() then
-		-- Validate all products have callbacks registered
+		-- Unlisted products need callbacks too: simulated purchases run them.
 		for key, data in State.RegisteredPurchaseItems do
 			if data.Type == "Product" then
 				assert(
-					ProductPurchaseCallbacks[data.AssetId] ~= nil,
+					ProductPurchaseCallbacks[key] ~= nil,
 					`[MarketService] Product '{key}' has no purchase callback registered. Use SetProductPurchaseCallback before Init.`
 				)
 			end

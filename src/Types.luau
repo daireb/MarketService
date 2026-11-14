@@ -1,6 +1,7 @@
+--- A registered product or pass. `AssetId` is nil for an unlisted item, one with no Roblox asset yet.
 export type PurchaseItem = {
 	Type: "Product" | "Pass",
-	AssetId: number,
+	AssetId: number?,
 }
 
 --- Datatype returned by MarketplaceService:GetProductInfo()
@@ -63,6 +64,8 @@ export type MarketplaceServiceReceiptInfo = {
 	CurrencySpent: number,
 	CurrencyType: Enum.CurrencyType,
 	ProductPurchaseChannel: Enum.ProductPurchaseChannel,
+	--- Set by MarketService on mock receipts; Roblox never sends it.
+	Simulated: boolean?,
 }
 
 export type ProductPurchaseCallback = (
@@ -71,6 +74,12 @@ export type ProductPurchaseCallback = (
 ) -> Enum.ProductPurchaseDecision
 
 export type PassOwnershipCallback = (player: Player, was_just_purchased: boolean, key: string) -> ()
+
+--- Which of a player's purchases the prompt helpers simulate instead of charging.
+--- - `None`: nothing; a normal player.
+--- - `Unlisted`: items without an asset id; listed items prompt for real.
+--- - `All`: every purchase.
+export type TestBuyerMode = "None" | "Unlisted" | "All"
 
 --- Function that disconnects a callback when called
 export type DisconnectFunction = () -> ()

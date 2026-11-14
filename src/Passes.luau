@@ -4,31 +4,28 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local Finished = require(script.Parent.Finished)
 local State = require(script.Parent.State)
 local Types = require(script.Parent.Types)
 
-local PassOwnershipCache = {} :: { [number]: { [number]: boolean } } -- userId -> passId -> owned
+-- Keyed by pass key rather than pass id, since unlisted passes have no id.
+local PassOwnershipCache = {} :: { [number]: { [string]: boolean } } -- userId -> key -> owned
 local PassOwnershipCallbacks = {} :: { [string]: { Types.PassOwnershipCallback } } -- key -> callbacks array
-local PassOwnershipCallbacksFired = {} :: { [number]: { [number]: boolean } } -- userId -> passId -> fired
+local PassOwnershipCallbacksFired = {} :: { [number]: { [string]: boolean } } -- userId -> key -> fired
 
 local SyncPassOwnershipRemote: RemoteEvent = nil :: any -- Initialized in Init
 
 --- Internal function to attempt firing pass ownership callbacks for a player
 --- Only fires if not already fired for this player/pass combination
-local attempt_fire_pass_ownership_callbacks = function(
-	player: Player,
-	key: string,
-	pass_id: number,
-	was_just_purchased: boolean
-)
+local attempt_fire_pass_ownership_callbacks = function(player: Player, key: string, was_just_purchased: boolean)
 	local user_id = player.UserId
 	PassOwnershipCallbacksFired[user_id] = PassOwnershipCallbacksFired[user_id] or {}
 
-	if PassOwnershipCallbacksFired[user_id][pass_id] then
+	if PassOwnershipCallbacksFired[user_id][key] then
 		return -- Already fired
 	end
 
-	PassOwnershipCallbacksFired[user_id][pass_id] = true
+	PassOwnershipCallbacksFired[user_id][key] = true
 
 	local callbacks = PassOwnershipCallbacks[key]
 	if callbacks then
@@ -48,22 +45,22 @@ local grant_pass_ownership = function(player: Player, key: string, was_just_purc
 	end
 
 	local user_id = player.UserId
-	local pass_id = data.AssetId
 
 	PassOwnershipCache[user_id] = PassOwnershipCache[user_id] or {}
-	PassOwnershipCache[user_id][pass_id] = true
+	PassOwnershipCache[user_id][key] = true
 
-	attempt_fire_pass_ownership_callbacks(player, key, pass_id, was_just_purchased)
+	attempt_fire_pass_ownership_callbacks(player, key, was_just_purchased)
 end
 
---- Internal function to preload pass ownership for a player
+--- Internal function to preload pass ownership for a player.
+--- Unlisted passes are skipped: only AwardSessionPass grants them.
 local preload_player_passes = function(player: Player)
 	local user_id = player.UserId
 	PassOwnershipCache[user_id] = PassOwnershipCache[user_id] or {}
 
 	for key, data in State.RegisteredPurchaseItems do
-		if data.Type == "Pass" then
-			local pass_id = data.AssetId
+		local pass_id = data.AssetId
+		if data.Type == "Pass" and pass_id ~= nil then
 			local owned = false
 
 			for attempt = 1, State.MAX_RETRY_ATTEMPTS do
@@ -85,15 +82,22 @@ local preload_player_passes = function(player: Player)
 			end
 
 			-- Only update cache if not already marked as owned (preserves session passes)
-			if PassOwnershipCache[user_id][pass_id] == nil then
-				PassOwnershipCache[user_id][pass_id] = owned
+			if PassOwnershipCache[user_id][key] == nil then
+				PassOwnershipCache[user_id][key] = owned
 			end
 
-			if PassOwnershipCache[user_id][pass_id] then
-				attempt_fire_pass_ownership_callbacks(player, key, pass_id, false)
+			if PassOwnershipCache[user_id][key] then
+				attempt_fire_pass_ownership_callbacks(player, key, false)
 			end
 		end
 	end
+end
+
+local assert_pass = function(key: string): Types.PurchaseItem
+	local data = State.RegisteredPurchaseItems[key]
+	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
+	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
+	return data
 end
 
 local Passes = {}
@@ -114,7 +118,7 @@ Passes.GetAllPassKeys = function(): { string }
 end
 
 --[=[
-	Checks if a pass is registered with the given key
+	Checks if a pass is registered with the given key, listed or not
 
 	@param key string -- The key to check
 	@return boolean -- Whether a pass is registered with this key
@@ -127,12 +131,13 @@ end
 -- Pre-initialisation
 
 --[=[
-	Registers a purchase item of type "Pass"
+	Registers a purchase item of type "Pass". Without a pass id the pass is unlisted: it can't
+	be prompted or looked up on Roblox, and a player owns it only through AwardSessionPass.
 
 	@param key string -- The key to register the pass under
-	@param pass_id number -- The Roblox pass ID
+	@param pass_id number? -- The Roblox pass ID, or nil for an unlisted pass
 ]=]
-Passes.RegisterPass = function(key: string, pass_id: number)
+Passes.RegisterPass = function(key: string, pass_id: number?)
 	assert(
 		not State.Initialised,
 		"[MarketService] Cannot register new purchase items after MarketService has been initialised"
@@ -142,12 +147,13 @@ Passes.RegisterPass = function(key: string, pass_id: number)
 		"[MarketService] Pass with key '" .. key .. "' is already registered"
 	)
 
-	-- Check for duplicate asset IDs
-	for existingKey, existingData in State.RegisteredPurchaseItems do
-		assert(
-			existingData.AssetId ~= pass_id,
-			`[MarketService] Asset ID {pass_id} is already registered under key '{existingKey}'`
-		)
+	if pass_id ~= nil then
+		for existingKey, existingData in State.RegisteredPurchaseItems do
+			assert(
+				existingData.AssetId ~= pass_id,
+				`[MarketService] Asset ID {pass_id} is already registered under key '{existingKey}'`
+			)
+		end
 	end
 
 	State.RegisteredPurchaseItems[key] = {
@@ -180,9 +186,7 @@ end
 	@return () -> () -- A function that, when called, disconnects this callback
 ]=]
 Passes.OnPassOwned = function(key: string, callback: Types.PassOwnershipCallback): () -> ()
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
+	assert_pass(key)
 
 	if not PassOwnershipCallbacks[key] then
 		PassOwnershipCallbacks[key] = {}
@@ -192,7 +196,7 @@ Passes.OnPassOwned = function(key: string, callback: Types.PassOwnershipCallback
 	-- Fire callback for players whose ownership is already cached.
 	-- Players still being checked will have callbacks fired by preload_player_passes.
 	for user_id, user_cache in PassOwnershipCache do
-		if user_cache[data.AssetId] then
+		if user_cache[key] then
 			local player = Players:GetPlayerByUserId(user_id)
 			if player then
 				task.spawn(callback, player, false, key)
@@ -233,20 +237,18 @@ Passes.PlayerOwnsPass = function(key: string, player: Player?): boolean
 		resolved_player = Players.LocalPlayer :: Player
 	end
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
+	assert_pass(key)
 
 	local user_cache = PassOwnershipCache[resolved_player.UserId]
 	if user_cache == nil then
 		return false
 	end
 
-	return user_cache[data.AssetId] or false
+	return user_cache[key] or false
 end
 
 --[=[
-	Returns the product info for a registered pass purchase item
+	Returns the product info for a registered, listed pass purchase item
 
 	@yields
 	@param key string -- The key the pass was registered with
@@ -255,9 +257,8 @@ end
 Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProductInfo
 	assert(State.Initialised, "[MarketService] MarketService must be initialised before getting pass info")
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
+	local pass_id = assert_pass(key).AssetId
+	assert(pass_id ~= nil, `[MarketService] Pass '{key}' is unlisted and has no pass info`)
 
 	if RunService:IsServer() then
 		warn(
@@ -268,7 +269,7 @@ Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProduct
 	local lastError: string? = nil
 	for attempt = 1, State.MAX_RETRY_ATTEMPTS do
 		local success, result = pcall(function()
-			return MarketplaceService:GetProductInfo(data.AssetId, Enum.InfoType.GamePass)
+			return MarketplaceService:GetProductInfo(pass_id, Enum.InfoType.GamePass)
 		end)
 
 		if success then
@@ -288,29 +289,6 @@ Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProduct
 end
 
 --[=[
-	Prompts the purchase prompt for a registered pass purchase item.
-
-	@param key string -- The key the pass was registered with
-	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
-]=]
-Passes.PromptPassPurchase = function(key: string, player: Player?)
-	assert(State.Initialised, "[MarketService] MarketService must be initialised before prompting purchases")
-
-	if RunService:IsServer() then
-		assert(player ~= nil, "[MarketService] Player must be provided when prompting purchase from server")
-	else
-		assert(player == nil, "[MarketService] Player must not be provided when prompting purchase from client")
-		player = Players.LocalPlayer
-	end
-
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
-
-	MarketplaceService:PromptGamePassPurchase(player, data.AssetId)
-end
-
---[=[
 	Awards a player temporary ownership of a pass for the current session.
 	This updates the local cache as if they purchased it and fires ownership callbacks.
 	Server-only function that replicates to the client.
@@ -323,9 +301,7 @@ Passes.AwardSessionPass = function(player: Player, key: string, was_just_purchas
 	assert(State.Initialised, "[MarketService] MarketService must be initialised before awarding session passes")
 	assert(RunService:IsServer(), "[MarketService] AwardSessionPass can only be called from the server")
 
-	local data = State.RegisteredPurchaseItems[key]
-	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
-	assert(data.Type == "Pass", "[MarketService] Expected purchase item type to be 'Pass'")
+	assert_pass(key)
 
 	local was_purchased = was_just_purchased or false
 
@@ -334,6 +310,23 @@ Passes.AwardSessionPass = function(player: Player, key: string, was_just_purchas
 
 	-- Sync to client
 	SyncPassOwnershipRemote:FireClient(player, key, was_purchased)
+end
+
+--[=[
+	Simulates a pass purchase: awards the pass for the session as just purchased, then fires
+	`PassPurchaseFinished` on the server and the player's client. Works for unlisted passes.
+	Server-only. Unlike `PromptPassPurchase` for a test buyer it doesn't check whether the
+	player already owns the pass.
+
+	@param key string -- The key the pass was registered with
+	@param player Player -- The player to simulate the purchase for
+]=]
+Passes.SimulatePassPurchase = function(key: string, player: Player)
+	assert(State.Initialised, "[MarketService] MarketService must be initialised before simulating purchases")
+	assert(RunService:IsServer(), "[MarketService] SimulatePassPurchase can only be called from the server")
+
+	Passes.AwardSessionPass(player, key, true)
+	Finished.FireSimulated(player, "Pass", key)
 end
 
 -- Initialization
