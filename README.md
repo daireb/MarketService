@@ -8,7 +8,7 @@ An opinionated [MarketplaceService](https://create.roblox.com/docs/reference/eng
 - **Automatic pass ownership caching** — Pass ownership is preloaded and cached for instant lookups
 - **OnPassOwned callbacks** — Register callbacks that fire once when a player owns a pass (whether pre-owned or just purchased)
 - **Session passes** — Grant temporary pass ownership that lasts for the current session
-- **Server-answered purchase requests** — One client call that the server answers by prompting, simulating for test buyers or refusing
+- **Test buyers** — Per-player modes that make the usual prompt helpers simulate purchases, with no Robux or Roblox asset needed
 - **Unlisted items** — Register products and passes before they have Roblox asset ids
 - **Automatic retries** — API calls retry automatically on failure
 - **Server & client support** — Works seamlessly on both server and client
@@ -81,7 +81,7 @@ MarketService.Init()
 
 ### Unlisted items
 
-An item registered without an id is **unlisted**: it has no Roblox asset yet. Everything keyed on the item works (callbacks, `OnPassOwned`, `PlayerOwnsPass`, simulation, session passes), but `Prompt*Purchase` and `Get*InfoAsync` error on it, and players without the test buyer check get `"Unavailable"` from a purchase request.
+An item registered without an id is **unlisted**: it has no Roblox asset yet. Everything keyed on the item works (callbacks, `OnPassOwned`, `PlayerOwnsPass`, session passes, simulated purchases), but it has no Roblox prompt and `Get*InfoAsync` errors on it. Only a test buyer can buy it (see [Test buyers](#test-buyers)).
 
 ```lua
 MarketService.RegisterProduct("Gems500")  -- no product id yet
@@ -94,52 +94,51 @@ MarketService.IsListed("Gems500") --> false
 
 An unlisted pass is never looked up on Roblox: a player owns it only through `AwardSessionPass` (or a simulated purchase, which awards it the same way).
 
-### Purchase requests
+### Test buyers
 
-Route purchases through the server so it decides what each player gets:
+Each player has a **test buyer mode**, which decides which of their purchases `PromptProductPurchase` and `PromptPassPurchase` simulate instead of charging:
 
-```lua
--- Client
-local answer, reason = MarketService.RequestPurchaseAsync("Gems500")
-if answer == "Refused" then
-    showMessage(reason)
-end
-```
+| Mode | Simulated |
+|------|-----------|
+| `"None"` | Nothing: a normal player |
+| `"Unlisted"` | Items without an asset id; listed items prompt for real |
+| `"All"` | Every purchase |
 
-The server answers, in order:
-
-1. `"Unavailable"` if the key isn't a registered item.
-2. `"Refused"` (with the gate's reason) if the purchase gate says no.
-3. `"Refused"` (`"Already owned"`) if the item is a pass the player already owns. This reads the ownership cache, so in the moments after joining, before it has loaded, an owned pass can still be prompted or simulated.
-4. `"Simulated"` if the test buyer check says yes: the product's callback runs with a mock receipt, or the pass is awarded for the session.
-5. `"Prompted"` if the item is listed: Roblox's purchase prompt is shown from the server.
-6. `"Unavailable"` otherwise (an unlisted item for a normal player).
-
-A request from a player whose previous request is still being answered is `"Refused"` (`"Request already in progress"`); the guard ends when the answer returns, not when a simulated product's callback does. A player who leaves while a hook yields gets `"Unavailable"` and nothing happens. If the request itself fails, or the server never initialised MarketService, the client gets `"Unavailable"`.
-
-A simulated purchase fires `ProductPurchaseFinished` or `PassPurchaseFinished` on the server and on the player's client, which MarketService replicates itself. For a simulated pass the event can arrive before `RequestPurchaseAsync` returns; for a simulated product it fires once the callback has finished, which can be well after. Don't rely on either order. For a `"Prompted"` purchase the events come from MarketplaceService as with any prompt; that they reach the client for a prompt the server started is not yet confirmed.
-
-When a test buyer's product callback returns `NotProcessedYet`, MarketService redelivers the same receipt after 5, 15 and 45 seconds while the player stays, then gives up with a warning, much as Roblox redelivers real receipts. `ProductPurchaseFinished` fires once, after the first delivery, with `true`.
-
-Both hooks are optional, server-only, and can be set before or after `Init`. Passing `nil` clears one. A hook that errors refuses the request (gate) or doesn't simulate (test buyer check), with a warning.
+The default is `"Unlisted"` in Studio and `"None"` everywhere else, so unlisted items can be bought in Studio with no setup and nothing is simulated on a live server unless your game says so. Only the server sets a mode, before or after `Init`; `nil` returns the player to the default:
 
 ```lua
 -- Server
-MarketService.SetPurchaseGate(function(player, key)
-    if isInTrade(player) then
-        return false, "Finish your trade first"
+Players.PlayerAdded:Connect(function(player)
+    if isTester(player) then
+        MarketService.SetTestBuyerMode(player, "All")
     end
-    return true
-end)
-
-MarketService.SetTestBuyerCheck(function(player, key)
-    return RunService:IsStudio() or isTester(player)
 end)
 ```
 
+The mode replicates to the player's client as an attribute on their `Player` (`MarketServiceTestBuyerMode`), so `GetTestBuyerMode()`, `WillSimulate(key)` and `IsPurchasable(key)` work there for the local player, even for a mode set before the client loaded. Like any attribute, every client can read it, so don't make a mode something players shouldn't learn about each other. The client's copy is only a hint for UI: the server checks its own mode before simulating anything a client asks for.
+
+Game code calls the prompt helpers the same way for everyone:
+
+```lua
+-- Client
+if MarketService.IsPurchasable("Gems500") then
+    MarketService.PromptProductPurchase("Gems500")
+end
+```
+
+- If the purchase will be simulated, the client asks the server, which simulates it after checking the key and its own mode for the player. A product's callback runs with a mock receipt; a pass is awarded for the session unless the player already owns it. Called on the server, the helper simulates directly.
+- Otherwise a listed item opens Roblox's prompt on the side that called, with no round trip.
+- Otherwise (unlisted, and not a test buyer) nothing can be bought: the helper warns and fires the finished event on the calling side with `wasPurchased` false. It doesn't error, so a button handler doesn't break.
+
+A simulated purchase fires `ProductPurchaseFinished` or `PassPurchaseFinished` on the server and on the player's client, which MarketService replicates itself, with `wasSimulated` true. For a product it fires once the callback has first returned, which can take a while. When the server declines a client's simulate request (unknown key, its mode says no, or the pass is already owned), the client gets the finished event with `wasPurchased` false so a waiting UI clears; the server warns for all but the already-owned case, at most once every 10 seconds per player.
+
+When a simulated product's callback returns `NotProcessedYet`, MarketService redelivers the same receipt after 5, 15 and 45 seconds while the player stays, then gives up with a warning, much as Roblox redelivers real receipts. `ProductPurchaseFinished` fires once, after the first delivery, with `wasPurchased` true.
+
+Pre-purchase checks (can the player afford it, are they in a trade) belong in your UI before it calls the prompt helper. Nothing before the prompt is authoritative, since any client can open a Roblox prompt itself; the receipt is. Grant in the purchase callback.
+
 ### Testing purchases
 
-With a test buyer check set, testers buy through the same `RequestPurchaseAsync` path as players, with no Robux spent and no Roblox asset needed. To simulate directly on the server:
+For commands and tests, simulate directly on the server, whatever the player's mode:
 
 ```lua
 -- Yields; returns the callback's Enum.ProductPurchaseDecision and the receipt's PurchaseId
@@ -156,7 +155,7 @@ MarketService.SimulateProductPurchased("Gems500", player)
 MarketService.SimulatePassPurchase("AutoSell", player)
 ```
 
-Mock receipts have `Simulated = true`, `CurrencySpent = 0`, the product's id as `ProductId` (0 when unlisted) and a `PurchaseId` of `"test-"` plus a GUID, so they never collide with real receipts. Calling `SimulateProductPurchaseAsync` directly redelivers nothing on its own; a redelivery (a `PurchaseId` passed back) fires no finished event. `AwardSessionPass(player, key, true)` alone grants the pass without firing `PassPurchaseFinished`.
+Mock receipts have `Simulated = true`, `CurrencySpent = 0`, the product's id as `ProductId` (0 when unlisted) and a `PurchaseId` of `"test-"` plus a GUID, so they never collide with real receipts. These functions don't check ownership or redeliver on their own; a redelivery (a `PurchaseId` passed back) fires no finished event. `AwardSessionPass(player, key, true)` alone grants the pass without firing `PassPurchaseFinished`.
 
 ### Passes
 
@@ -224,16 +223,18 @@ dataChangedSignal:Connect(onPlayerData)
 For side effects like sound effects (not for critical logic):
 
 ```lua
-MarketService.PassPurchaseFinished:Connect(function(player, key, wasPurchased)
+MarketService.PassPurchaseFinished:Connect(function(player, key, wasPurchased, wasSimulated)
     if wasPurchased then
         -- Play sound, show UI, etc.
     end
 end)
 
-MarketService.ProductPurchaseFinished:Connect(function(player, key, wasPurchased)
+MarketService.ProductPurchaseFinished:Connect(function(player, key, wasPurchased, wasSimulated)
     -- ...
 end)
 ```
+
+`wasSimulated` is false for anything real, and true for a simulated purchase or a declined simulate request.
 
 ## API Reference
 
@@ -246,7 +247,7 @@ end)
 | `OnPassOwned(key, callback) -> disconnect` | Callback fires once when player owns pass - either their ownership just loaded or they just purchased it. Returns disconnect function |
 | `PlayerOwnsPass(key, player?) -> boolean` | Check ownership from cache. Player required on server, omit on client |
 | `GetPassInfoAsync(key) -> ProductInfo` | Get pass info from Roblox (yields). Listed passes only |
-| `PromptPassPurchase(key, player?)` | Prompt purchase. Player required on server, omit on client. Listed passes only |
+| `PromptPassPurchase(key, player?)` | Simulate for a test buyer (declined if already owned), else open Roblox's prompt for a listed pass, else warn and fire `PassPurchaseFinished` with `false`. Player required on server, omit on client |
 | `AwardSessionPass(player, key, wasJustPurchased?)` | Grant temporary ownership until player leaves (server only) |
 | `SimulatePassPurchase(key, player)` | `AwardSessionPass` as just purchased, then fire `PassPurchaseFinished` on server and client (server only). Doesn't check existing ownership |
 | `GetAllPassKeys() -> { string }` | Get all registered pass keys |
@@ -260,26 +261,27 @@ end)
 | `RegisterProducts(products)` | Register multiple products `{ [key] = productId }` |
 | `SetProductPurchaseCallback(key, callback)` | Set receipt handler for a product. Must return `Enum.ProductPurchaseDecision`. All products require a receipt handler! |
 | `GetProductInfoAsync(key) -> ProductInfo` | Get product info from Roblox (yields). Listed products only |
-| `PromptProductPurchase(key, player?)` | Prompt purchase. Player required on server, omit on client. Listed products only |
+| `PromptProductPurchase(key, player?)` | Simulate for a test buyer (with redelivery), else open Roblox's prompt for a listed product, else warn and fire `ProductPurchaseFinished` with `false`. Player required on server, omit on client |
 | `SimulateProductPurchaseAsync(key, player, purchaseId?) -> (ProductPurchaseDecision, purchaseId)` | Run the callback with a mock receipt and return its decision and the receipt's `PurchaseId` (yields, server only). A fresh purchase fires `ProductPurchaseFinished` on server and client; passing a `purchaseId` redelivers that receipt and fires nothing |
 | `SimulateProductPurchased(key, player)` | Non-yielding `SimulateProductPurchaseAsync` (server only) |
 | `GetAllProductKeys() -> { string }` | Get all registered product keys |
 | `IsProductRegistered(key) -> boolean` | Check if a product is registered, listed or not |
 
-### Purchase requests
+### Test buyers
 
 | Function | Description |
 |----------|-------------|
-| `RequestPurchaseAsync(key) -> (PurchaseAnswer, string?)` | Ask the server to buy a product or pass (yields, client only). Answers `"Prompted"`, `"Simulated"`, `"Unavailable"` or `"Refused"` with a reason |
-| `SetPurchaseGate(gate?)` | `(player, key) -> (boolean, string?)`; returning false refuses with the reason (server only) |
-| `SetTestBuyerCheck(check?)` | `(player, key) -> boolean`; true simulates instead of prompting (server only) |
+| `SetTestBuyerMode(player, mode?)` | Set `"None"`, `"Unlisted"` or `"All"`; `nil` restores the default (`"Unlisted"` in Studio, `"None"` elsewhere). Replicates to the player's client (server only) |
+| `GetTestBuyerMode(player?) -> TestBuyerMode` | The player's mode. Player required on server; on the client nil or the local player |
+| `WillSimulate(key, player?) -> boolean` | Whether the prompt helpers would simulate this purchase: mode `"All"`, or `"Unlisted"` and the item is unlisted. Player as for `GetTestBuyerMode` |
+| `IsPurchasable(key, player?) -> boolean` | Listed, or `WillSimulate`. Says nothing about pass ownership. Player as for `GetTestBuyerMode` |
 
 ### Events
 
 | Event | Description |
 |-------|-------------|
-| `PassPurchaseFinished(player, key, wasPurchased)` | Fires when pass purchase prompt closes, or a pass purchase is simulated |
-| `ProductPurchaseFinished(player, key, wasPurchased)` | Fires when product purchase prompt closes, or after a simulated product purchase's callback |
+| `PassPurchaseFinished(player, key, wasPurchased, wasSimulated)` | Fires when a pass purchase prompt closes, a pass purchase is simulated, or a simulate request is declined |
+| `ProductPurchaseFinished(player, key, wasPurchased, wasSimulated)` | Fires when a product purchase prompt closes, after a simulated product purchase's callback first returns, or when a simulate request is declined |
 
 ### General
 

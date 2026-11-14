@@ -215,28 +215,6 @@ Products.GetProductInfoAsync = function(key: string): Types.MarketplaceServicePr
 end
 
 --[=[
-	Prompts the purchase prompt for a registered, listed product purchase item.
-
-	@param key string -- The key the product was registered with
-	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
-]=]
-Products.PromptProductPurchase = function(key: string, player: Player?)
-	assert(State.Initialised, "[MarketService] MarketService must be initialised before prompting purchases")
-
-	if RunService:IsServer() then
-		assert(player ~= nil, "[MarketService] Player must be provided when prompting purchase from server")
-	else
-		assert(player == nil, "[MarketService] Player must not be provided when prompting purchase from client")
-		player = Players.LocalPlayer
-	end
-
-	local product_id = assert_product(key).AssetId
-	assert(product_id ~= nil, `[MarketService] Product '{key}' is unlisted and can't be prompted`)
-
-	MarketplaceService:PromptProductPurchase(player, product_id)
-end
-
---[=[
 	Simulates a product purchase: runs the purchase callback with a mock receipt and returns
 	its decision (NotProcessedYet if it errors or returns something else). Works for unlisted
 	products. Server-only.

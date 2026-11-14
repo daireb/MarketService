@@ -9,27 +9,49 @@ local State = require(script.Parent.State)
 --- them from MarketplaceService.
 local SimulatedFinishedRemote: RemoteEvent = nil :: any -- Initialized in Init
 
-local fire_local = function(player: Player, item_type: "Product" | "Pass", key: string)
-	if item_type == "Product" then
-		State.ProductPurchaseFinished:Fire(player, key, true)
-	else
-		State.PassPurchaseFinished:Fire(player, key, true)
-	end
-end
-
 local Finished = {}
 
 --[=[
-	Fires `ProductPurchaseFinished` or `PassPurchaseFinished` with `wasPurchased` true on the
-	server and on `player`'s client, as a real purchase would. Server-only.
+	Fires `ProductPurchaseFinished` or `PassPurchaseFinished` on this side only.
+]=]
+Finished.FireLocal = function(
+	player: Player,
+	item_type: "Product" | "Pass",
+	key: string,
+	was_purchased: boolean,
+	was_simulated: boolean
+)
+	if item_type == "Product" then
+		State.ProductPurchaseFinished:Fire(player, key, was_purchased, was_simulated)
+	else
+		State.PassPurchaseFinished:Fire(player, key, was_purchased, was_simulated)
+	end
+end
+
+--[=[
+	Fires the finished event for a simulated purchase, with `wasPurchased` true, on the server
+	and on `player`'s client, as a real purchase would. Server-only.
 ]=]
 Finished.FireSimulated = function(player: Player, item_type: "Product" | "Pass", key: string)
 	assert(RunService:IsServer(), "[MarketService] FireSimulated can only be called from the server")
 
-	fire_local(player, item_type, key)
+	Finished.FireLocal(player, item_type, key, true, true)
 
 	if player.Parent == Players then
-		SimulatedFinishedRemote:FireClient(player, item_type, key)
+		SimulatedFinishedRemote:FireClient(player, item_type, key, true)
+	end
+end
+
+--[=[
+	Tells `player`'s client its simulate request was declined, with `wasPurchased` false, so a
+	UI waiting on the finished event clears. Fires nothing on the server, where no purchase was
+	attempted. Server-only.
+]=]
+Finished.FireDeclined = function(player: Player, item_type: "Product" | "Pass", key: string)
+	assert(RunService:IsServer(), "[MarketService] FireDeclined can only be called from the server")
+
+	if player.Parent == Players then
+		SimulatedFinishedRemote:FireClient(player, item_type, key, false)
 	end
 end
 
@@ -45,12 +67,14 @@ Finished.Init = function()
 	else
 		task.spawn(function()
 			SimulatedFinishedRemote = script.Parent:WaitForChild("SimulatedPurchaseFinished") :: RemoteEvent
-			SimulatedFinishedRemote.OnClientEvent:Connect(function(item_type: "Product" | "Pass", key: string)
-				local local_player = Players.LocalPlayer
-				if local_player then
-					fire_local(local_player, item_type, key)
+			SimulatedFinishedRemote.OnClientEvent:Connect(
+				function(item_type: "Product" | "Pass", key: string, was_purchased: boolean)
+					local local_player = Players.LocalPlayer
+					if local_player then
+						Finished.FireLocal(local_player, item_type, key, was_purchased, true)
+					end
 				end
-			end)
+			)
 		end)
 	end
 end

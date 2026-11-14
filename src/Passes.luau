@@ -289,28 +289,6 @@ Passes.GetPassInfoAsync = function(key: string): Types.MarketplaceServiceProduct
 end
 
 --[=[
-	Prompts the purchase prompt for a registered, listed pass purchase item.
-
-	@param key string -- The key the pass was registered with
-	@param player Player? -- The player to prompt the purchase for (server only). Must be nil when called from client.
-]=]
-Passes.PromptPassPurchase = function(key: string, player: Player?)
-	assert(State.Initialised, "[MarketService] MarketService must be initialised before prompting purchases")
-
-	if RunService:IsServer() then
-		assert(player ~= nil, "[MarketService] Player must be provided when prompting purchase from server")
-	else
-		assert(player == nil, "[MarketService] Player must not be provided when prompting purchase from client")
-		player = Players.LocalPlayer
-	end
-
-	local pass_id = assert_pass(key).AssetId
-	assert(pass_id ~= nil, `[MarketService] Pass '{key}' is unlisted and can't be prompted`)
-
-	MarketplaceService:PromptGamePassPurchase(player, pass_id)
-end
-
---[=[
 	Awards a player temporary ownership of a pass for the current session.
 	This updates the local cache as if they purchased it and fires ownership callbacks.
 	Server-only function that replicates to the client.
@@ -337,8 +315,8 @@ end
 --[=[
 	Simulates a pass purchase: awards the pass for the session as just purchased, then fires
 	`PassPurchaseFinished` on the server and the player's client. Works for unlisted passes.
-	Server-only. Unlike a purchase request it doesn't check whether the player already owns
-	the pass.
+	Server-only. Unlike `PromptPassPurchase` for a test buyer it doesn't check whether the
+	player already owns the pass.
 
 	@param key string -- The key the pass was registered with
 	@param player Player -- The player to simulate the purchase for
