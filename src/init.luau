@@ -3,12 +3,18 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 
+local Finished = require(script.Finished)
 local Passes = require(script.Passes)
 local Products = require(script.Products)
+local Requests = require(script.Requests)
 local State = require(script.State)
 local Types = require(script.Types)
 
 export type MarketServiceProductInfo = Types.MarketplaceServiceProductInfo
+export type MarketServiceReceiptInfo = Types.MarketplaceServiceReceiptInfo
+export type PurchaseAnswer = Types.PurchaseAnswer
+export type PurchaseGate = Types.PurchaseGate
+export type TestBuyerCheck = Types.TestBuyerCheck
 
 local MarketService = {}
 
@@ -19,6 +25,7 @@ MarketService.SetProductPurchaseCallback = Products.SetProductPurchaseCallback
 MarketService.GetProductInfoAsync = Products.GetProductInfoAsync
 MarketService.PromptProductPurchase = Products.PromptProductPurchase
 MarketService.SimulateProductPurchased = Products.SimulateProductPurchased
+MarketService.SimulateProductPurchaseAsync = Products.SimulateProductPurchaseAsync
 MarketService.GetAllProductKeys = Products.GetAllProductKeys
 MarketService.IsProductRegistered = Products.IsProductRegistered
 
@@ -30,13 +37,32 @@ MarketService.PlayerOwnsPass = Passes.PlayerOwnsPass
 MarketService.GetPassInfoAsync = Passes.GetPassInfoAsync
 MarketService.PromptPassPurchase = Passes.PromptPassPurchase
 MarketService.AwardSessionPass = Passes.AwardSessionPass
+MarketService.SimulatePassPurchase = Passes.SimulatePassPurchase
 MarketService.GetAllPassKeys = Passes.GetAllPassKeys
 MarketService.IsPassRegistered = Passes.IsPassRegistered
+
+-- Purchase requests (delegated to Requests module)
+MarketService.RequestPurchaseAsync = Requests.RequestPurchaseAsync
+MarketService.SetPurchaseGate = Requests.SetPurchaseGate
+MarketService.SetTestBuyerCheck = Requests.SetTestBuyerCheck
 
 -- Purchase events (for side effects like sound effects, NOT for critical logic)
 -- Usage: MarketService.ProductPurchaseFinished:Connect(function(player, key, wasPurchased) end)
 MarketService.ProductPurchaseFinished = State.ProductPurchaseFinished.Event
 MarketService.PassPurchaseFinished = State.PassPurchaseFinished.Event
+
+--[=[
+	Returns whether a registered product or pass has a Roblox asset id. Unlisted items can't be
+	prompted or looked up, only simulated (products) or awarded (passes).
+
+	@param key string -- The key the item was registered with
+	@return boolean -- Whether the item is listed
+]=]
+MarketService.IsListed = function(key: string): boolean
+	local data = State.RegisteredPurchaseItems[key]
+	assert(data ~= nil, `[MarketService] No purchase item registered with key '{key}'`)
+	return data.AssetId ~= nil
+end
 
 -- Helper to find key by asset ID and type
 local function getKeyByAssetId(assetId: number, itemType: "Product" | "Pass"): string?
@@ -59,8 +85,10 @@ MarketService.Init = function()
 	end
 
 	-- Initialize submodules
+	Finished.Init()
 	Products.Init()
 	Passes.Init()
+	Requests.Init()
 
 	-- Wrap MarketplaceService events
 	MarketplaceService.PromptProductPurchaseFinished:Connect(

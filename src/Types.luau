@@ -1,6 +1,7 @@
+--- A registered product or pass. `AssetId` is nil for an unlisted item, one with no Roblox asset yet.
 export type PurchaseItem = {
 	Type: "Product" | "Pass",
-	AssetId: number,
+	AssetId: number?,
 }
 
 --- Datatype returned by MarketplaceService:GetProductInfo()
@@ -63,6 +64,8 @@ export type MarketplaceServiceReceiptInfo = {
 	CurrencySpent: number,
 	CurrencyType: Enum.CurrencyType,
 	ProductPurchaseChannel: Enum.ProductPurchaseChannel,
+	--- Set by MarketService on mock receipts; Roblox never sends it.
+	Simulated: boolean?,
 }
 
 export type ProductPurchaseCallback = (
@@ -71,6 +74,20 @@ export type ProductPurchaseCallback = (
 ) -> Enum.ProductPurchaseDecision
 
 export type PassOwnershipCallback = (player: Player, was_just_purchased: boolean, key: string) -> ()
+
+--- The server's answer to `RequestPurchaseAsync`.
+--- - `Prompted`: Roblox's purchase prompt was shown.
+--- - `Simulated`: the purchase was simulated for a test buyer.
+--- - `Unavailable`: the key is unknown, the item is unlisted and the player isn't a test buyer, the
+---   player left mid-request, or the request failed.
+--- - `Refused`: the purchase gate said no, the pass is already owned or a request is already in flight.
+export type PurchaseAnswer = "Prompted" | "Simulated" | "Unavailable" | "Refused"
+
+--- Returns whether `player` may buy `key`, and a reason when not.
+export type PurchaseGate = (player: Player, key: string) -> (boolean, string?)
+
+--- Returns true when `player`'s purchases of `key` should be simulated instead of charged.
+export type TestBuyerCheck = (player: Player, key: string) -> boolean
 
 --- Function that disconnects a callback when called
 export type DisconnectFunction = () -> ()
